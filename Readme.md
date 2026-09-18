@@ -47,16 +47,6 @@ Switching modes re-renders the same section layout with different content, so th
 
 No frameworks, build tools or backend are used — the entire site is one static HTML file.
 
-## Preview
-
-### Profile
-
-_Add a screenshot at `assets/preview-profile.png` and reference it here._
-
-### Portfolio
-
-_Add a screenshot at `assets/preview-portfolio.png` and reference it here._
-
 
 ## Deployment
 
