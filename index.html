@@ -942,36 +942,77 @@
     document.querySelectorAll('.stat-num').forEach(function (el) { el.textContent = '—'; el.classList.add('pulse'); });
   }
 
+  /* ============ Local cache (avoids hammering the unauthenticated GitHub API) ============ */
+  var CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  function cacheGet(key) {
+    try {
+      var raw = localStorage.getItem(key);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || (Date.now() - parsed.t) > CACHE_TTL_MS) return null;
+      return parsed.v;
+    } catch (e) { return null; }
+  }
+  function cacheSet(key, value) {
+    try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value })); } catch (e) { /* storage full/blocked: ignore */ }
+  }
+
+  /* Turns a failed fetch Response (or network error) into a readable reason */
+  function describeFetchFailure(res, err) {
+    if (err) return 'Network error — check your connection.';
+    if (!res) return 'Unknown error.';
+    if (res.status === 403 || res.status === 429) return 'GitHub API rate limit exceeded (60 requests/hour for unauthenticated visitors) — showing cached/fallback data. Try again later.';
+    if (res.status === 404) return 'GitHub account "' + res.url.split('/').pop() + '" not found (404).';
+    return 'GitHub API error (HTTP ' + res.status + ').';
+  }
+
   /* ============ Live GitHub profile + stats ============ */
   function loadProfile(user) {
+    var cacheKey = 'gh-profile-' + user;
+    var cached = cacheGet(cacheKey);
+    if (cached) applyProfile(user, cached);
+
     fetch('https://api.github.com/users/' + user)
-      .then(function (res) { if (!res.ok) throw new Error('profile fetch failed'); return res.json(); })
+      .then(function (res) {
+        if (!res.ok) { var msg = describeFetchFailure(res); var e = new Error(msg); e.res = res; throw e; }
+        return res.json();
+      })
       .then(function (data) {
         if (user !== activeUser) return;
-        els.statRepos.textContent = data.public_repos != null ? data.public_repos : 'N/A';
-        els.statFollowers.textContent = data.followers != null ? data.followers : 'N/A';
-        els.statFollowing.textContent = data.following != null ? data.following : 'N/A';
-        els.statJoined.textContent = data.created_at ? new Date(data.created_at).getFullYear() : 'N/A';
-        if (data.bio) { els.heroBio.textContent = data.bio; }
-        else { els.heroBio.textContent = ACCOUNTS[user].fallbackBio; }
-        if (data.avatar_url) {
-          els.heroAvatar.src = data.avatar_url;
-          els.heroAvatar.alt = user + ' avatar';
-          els.heroAvatar.hidden = false;
-        }
+        cacheSet(cacheKey, data);
+        applyProfile(user, data);
+        els.loadNote.textContent = '';
       })
-      .catch(function () {
+      .catch(function (err) {
         if (user !== activeUser) return;
+        if (cached) {
+          // Already rendered from cache above; just note it's stale.
+          els.loadNote.textContent = (err && err.message ? err.message : describeFetchFailure(null, true)) + ' Showing cached data.';
+          return;
+        }
         els.statRepos.textContent = 'N/A';
         els.statFollowers.textContent = 'N/A';
         els.statFollowing.textContent = 'N/A';
         els.statJoined.textContent = 'N/A';
         els.heroBio.textContent = ACCOUNTS[user].fallbackBio;
-        els.loadNote.textContent = 'Live profile stats unavailable right now (offline or rate-limited) — refresh to retry.';
+        els.loadNote.textContent = err && err.message ? err.message : describeFetchFailure(null, true);
       })
       .finally(function () {
         document.querySelectorAll('.stat-num').forEach(function (el) { el.classList.remove('pulse'); });
       });
+  }
+
+  function applyProfile(user, data) {
+    els.statRepos.textContent = data.public_repos != null ? data.public_repos : 'N/A';
+    els.statFollowers.textContent = data.followers != null ? data.followers : 'N/A';
+    els.statFollowing.textContent = data.following != null ? data.following : 'N/A';
+    els.statJoined.textContent = data.created_at ? new Date(data.created_at).getFullYear() : 'N/A';
+    els.heroBio.textContent = data.bio ? data.bio : ACCOUNTS[user].fallbackBio;
+    if (data.avatar_url) {
+      els.heroAvatar.src = data.avatar_url;
+      els.heroAvatar.alt = user + ' avatar';
+      els.heroAvatar.hidden = false;
+    }
   }
 
   /* ============ Repo categorization (derived only from real repo data) ============ */
@@ -1150,39 +1191,58 @@
     });
   }
 
+  function applyRepos(repos) {
+    if (!Array.isArray(repos) || !repos.length) {
+      loadedRepos = [];
+      els.repoMeta.textContent = 'No public repos yet';
+      els.featuredMeta.textContent = 'No public repos yet';
+      renderFilters([], activeUser);
+      renderLanguageBar([]);
+      return;
+    }
+    loadedRepos = repos;
+    renderFilters(repos, activeUser);
+    renderRepoGrid();
+    renderFeatured(repos);
+    renderLanguageBar(repos);
+  }
+
   function loadRepos(user) {
+    var cacheKey = 'gh-repos-' + user;
+    var cached = cacheGet(cacheKey);
     els.repoMeta.textContent = 'Loading…';
     els.featuredMeta.textContent = 'Loading…';
     els.loadNote.textContent = '';
     els.repoGrid.innerHTML = '';
     els.featuredGrid.innerHTML = '';
-    fetch('https://api.github.com/users/' + user + '/repos?sort=pushed&per_page=100')
-      .then(function (res) { if (!res.ok) throw new Error('repo fetch failed'); return res.json(); })
+    if (cached) applyRepos(cached);
+
+    // Only 9 repos are ever shown on screen, so 30 is plenty of headroom
+    // without pulling a full page of 100 on every load.
+    fetch('https://api.github.com/users/' + user + '/repos?sort=pushed&per_page=30')
+      .then(function (res) {
+        if (!res.ok) { var msg = describeFetchFailure(res); var e = new Error(msg); throw e; }
+        return res.json();
+      })
       .then(function (repos) {
         if (user !== activeUser) return;
-        if (!Array.isArray(repos) || !repos.length) {
-          loadedRepos = [];
-          els.repoMeta.textContent = 'No public repos yet';
-          els.featuredMeta.textContent = 'No public repos yet';
-          els.loadNote.textContent = 'Nothing pushed to this account yet.';
-          renderFilters([], user);
-          renderLanguageBar([]);
+        cacheSet(cacheKey, repos);
+        applyRepos(repos);
+        if (!repos.length) els.loadNote.textContent = 'Nothing pushed to this account yet.';
+      })
+      .catch(function (err) {
+        if (user !== activeUser) return;
+        var reason = err && err.message ? err.message : describeFetchFailure(null, true);
+        if (cached) {
+          els.loadNote.textContent = reason + ' Showing cached repositories.';
           return;
         }
-        loadedRepos = repos;
-        renderFilters(repos, user);
-        renderRepoGrid();
-        renderFeatured(repos);
-        renderLanguageBar(repos);
-      })
-      .catch(function () {
-        if (user !== activeUser) return;
         loadedRepos = [];
         els.repoMeta.textContent = '';
         els.featuredMeta.textContent = '';
         els.repoGrid.innerHTML = '';
         els.featuredGrid.innerHTML = '';
-        els.loadNote.textContent = 'Live repository data unavailable right now (offline or rate-limited) — refresh to retry.';
+        els.loadNote.textContent = reason;
         renderFilters([], user);
         renderLanguageBar([]);
       });
