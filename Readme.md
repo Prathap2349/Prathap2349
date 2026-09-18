@@ -12,23 +12,6 @@ A single-page developer command center that combines a live GitHub profile dashb
 
 ---
 
-## Overview
-
-The site is a self-contained `index.html` with two modes, toggled from a switcher in the hero section:
-
-- **Profile** — a live GitHub dashboard for [Prathap2349](https://github.com/Prathap2349): profile stats, repositories, contribution streak and language breakdown, all pulled from the GitHub REST API.
-- **Portfolio** — a static personal portfolio for Prathap Senthilkumar: about, education, skills, projects and contact details, rendered without any API dependency.
-
-Switching modes re-renders the same section layout with different content, so the page keeps one consistent visual identity throughout.
-
-## Features
-
-- **Profile / Portfolio switcher** — segmented control in the hero that swaps the page between the two modes.
-- **Live GitHub stats** — public repo count, followers, following and member-since year, fetched from `api.github.com`.
-- **Repository browser** — searchable, filterable grid of recent repositories, auto-categorized (AI, Web, Android) from language and topic data.
-- **Command palette** — `⌘K` / `Ctrl+K` quick actions for navigation, mode switching and theme toggling.
-- **Dark / light theme** — toggle with the preference saved in `localStorage`.
-- **Local response caching** — GitHub API responses are cached for 10 minutes to avoid hitting unauthenticated rate limits.
 
 ## Profile & Portfolio Modes
 
